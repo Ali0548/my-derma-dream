@@ -15,6 +15,7 @@ async function main() {
   await run('node', ['./scripts/migrate.mjs']);
   await run('node', ['./scripts/seed.mjs']);
   await run('node', ['./scripts/initial-seeds.mjs']);
+  await run('node', ['./dist/jobs/recalcCommissions.js']);
   await run('node', ['dist/server.js']);
 }
 

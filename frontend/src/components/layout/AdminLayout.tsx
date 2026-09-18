@@ -15,7 +15,7 @@ const titles: Record<string, { title: string; subtitle: string }> = {
   },
   '/app/performance': {
     title: 'Performance',
-    subtitle: 'Coming next: partner ROAS across days.',
+    subtitle: 'Partners across days — revenue, spend, ROAS, sales, and AOV.',
   },
   '/app/rules': {
     title: 'CPA Rules',
@@ -23,7 +23,7 @@ const titles: Record<string, { title: string; subtitle: string }> = {
   },
   '/app/audit': {
     title: 'Order Audit',
-    subtitle: 'Coming next: why a rule won on a single order.',
+    subtitle: 'Open any order to see which rule won and why others were skipped.',
   },
 };
 

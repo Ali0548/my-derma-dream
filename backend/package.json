@@ -12,7 +12,10 @@
     "db:seed": "tsx src/db/seed.ts",
     "db:setup": "tsx src/db/migrate.ts && tsx src/db/seed.ts",
     "initial-seeds": "node scripts/initial-seeds.mjs",
-    "db:bootstrap": "npm run db:setup && npm run initial-seeds"
+    "db:bootstrap": "npm run db:setup && npm run initial-seeds",
+    "recalc": "tsx src/jobs/recalcCommissions.ts",
+    "test": "tsx --test src/**/*.test.ts",
+    "test:engine": "tsx --test src/modules/commission/engine.test.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
