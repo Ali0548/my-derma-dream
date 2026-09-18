@@ -1,5 +1,5 @@
 import { and, asc, eq, gte, lte, sql as dsql } from 'drizzle-orm';
-import { cache, cached } from '../../cache/index.js';
+import { REPORT_CACHE_TTL_SECONDS, cache, cached } from '../../cache/index.js';
 import { db } from '../../db/client.js';
 import {
   dailyPerformanceStats,
@@ -19,69 +19,56 @@ export type PerformanceFilters = {
   subAffiliate?: string;
   product?: string;
   pricePoint?: string;
-  roasMode: RoasMode;
-};
-
-export type MetricBlock = {
-  revenue: number;
-  spend: number;
-  roas: number | null;
-  sales: number;
-  aov: number | null;
+  /** Kept for API compat; payload always includes both revenues. */
+  roasMode?: RoasMode;
 };
 
 function round2(n: number) {
   return Math.round((n + Number.EPSILON) * 100) / 100;
 }
 
-function metrics(revenue: number, spend: number, sales: number): MetricBlock {
-  return {
-    revenue: round2(revenue),
-    spend: round2(spend),
-    sales,
-    roas: spend > 0 ? round2(revenue / spend) : null,
-    aov: sales > 0 ? round2(revenue / sales) : null,
-  };
-}
-
-function eachDay(from: string, to: string): string[] {
-  const days: string[] = [];
-  const cursor = new Date(`${from}T00:00:00.000Z`);
-  const end = new Date(`${to}T00:00:00.000Z`);
-  while (cursor <= end) {
-    days.push(cursor.toISOString().slice(0, 10));
-    cursor.setUTCDate(cursor.getUTCDate() + 1);
-  }
-  return days;
-}
-
+/** One cache entry per date/filter slice — ROAS is chosen on the client. */
 function cacheKey(filters: PerformanceFilters) {
-  return `report:perf:${filters.dateFrom}:${filters.dateTo}:${filters.affiliate ?? ''}:${filters.subAffiliate ?? ''}:${filters.product ?? ''}:${filters.pricePoint ?? ''}:${filters.roasMode}`;
+  return `report:perf:v4:${filters.dateFrom}:${filters.dateTo}:${filters.affiliate ?? ''}:${filters.subAffiliate ?? ''}:${filters.product ?? ''}:${filters.pricePoint ?? ''}`;
 }
 
-type AggCell = { sales: number; revenue: number; spend: number };
+type AggCell = { sales: number; frontend: number; total: number; spend: number };
 
 type SubAgg = {
   sales: number;
-  revenue: number;
+  frontend: number;
+  total: number;
   spend: number;
   byDay: Map<string, AggCell>;
 };
 
 type AffAgg = {
   sales: number;
-  revenue: number;
+  frontend: number;
+  total: number;
   spend: number;
   byDay: Map<string, AggCell>;
   subs: Map<string, SubAgg>;
 };
 
-function bump(cell: AggCell | undefined, sales: number, revenue: number, spend: number): AggCell {
-  const next = cell ?? { sales: 0, revenue: 0, spend: 0 };
+function bump(
+  cell: AggCell | undefined,
+  sales: number,
+  frontend: number,
+  total: number,
+  spend: number,
+): AggCell {
+  const next = cell ?? { sales: 0, frontend: 0, total: 0, spend: 0 };
   next.sales += sales;
-  next.revenue += revenue;
+  next.frontend += frontend;
+  next.total += total;
   next.spend += spend;
   return next;
+}
+
+/** Wire cell: [sales, frontendRevenue, totalRevenue, spend] */
+function pack(sales: number, frontend: number, total: number, spend: number): [number, number, number, number] {
+  return [sales, round2(frontend), round2(total), round2(spend)];
 }
 
 export class ReportsService {
@@ -133,7 +120,7 @@ export class ReportsService {
           dateMax: rangeRows[0]?.max ?? null,
         };
       },
-      120,
+      24 * 60 * 60,
     );
 
     return data;
@@ -149,14 +136,17 @@ export class ReportsService {
 
     const key = cacheKey(filters);
     const started = Date.now();
-    const { data, fromCache } = await cached(key, async () => this.buildPerformance(filters), 300);
+    const { data, fromCache } = await cached(
+      key,
+      async () => this.buildPerformance(filters),
+      REPORT_CACHE_TTL_SECONDS,
+    );
 
     return {
       ...data,
       meta: {
         fromCache,
         tookMs: Date.now() - started,
-        roasMode: filters.roasMode,
       },
     };
   }
@@ -180,18 +170,14 @@ export class ReportsService {
       conditions.push(eq(dailyPerformanceStats.pricePoint, filters.pricePoint));
     }
 
-    const useTotal = filters.roasMode === 'total';
-    const revenueExpr = useTotal
-      ? dsql<string>`COALESCE(SUM(${dailyPerformanceStats.totalRevenue}), 0)`
-      : dsql<string>`COALESCE(SUM(${dailyPerformanceStats.frontendRevenue}), 0)`;
-
     const rows = await db
       .select({
         day: dailyPerformanceStats.statDate,
         affiliateCode: dailyPerformanceStats.affiliateCode,
         subAffiliateCode: dailyPerformanceStats.subAffiliateCode,
         sales: dsql<number>`COALESCE(SUM(${dailyPerformanceStats.salesCount}), 0)::int`,
-        revenue: revenueExpr,
+        frontend: dsql<string>`COALESCE(SUM(${dailyPerformanceStats.frontendRevenue}), 0)`,
+        total: dsql<string>`COALESCE(SUM(${dailyPerformanceStats.totalRevenue}), 0)`,
         spend: dsql<string>`COALESCE(SUM(${dailyPerformanceStats.spend}), 0)`,
       })
       .from(dailyPerformanceStats)
@@ -202,21 +188,28 @@ export class ReportsService {
         dailyPerformanceStats.subAffiliateCode,
       );
 
-    const days = eachDay(filters.dateFrom, filters.dateTo);
+    const daysWithActivity = new Set<string>();
+    for (const row of rows) {
+      daysWithActivity.add(String(row.day));
+    }
+    const days = [...daysWithActivity].sort();
+
     const affiliatesMap = new Map<string, AffAgg>();
 
     for (const row of rows) {
       const aff = row.affiliateCode || '(direct)';
       const sub = row.subAffiliateCode || '(none)';
       const day = String(row.day);
-      const revenue = Number(row.revenue);
+      const frontend = Number(row.frontend);
+      const total = Number(row.total);
       const spend = Number(row.spend);
       const sales = Number(row.sales);
 
       if (!affiliatesMap.has(aff)) {
         affiliatesMap.set(aff, {
           sales: 0,
-          revenue: 0,
+          frontend: 0,
+          total: 0,
           spend: 0,
           byDay: new Map(),
           subs: new Map(),
@@ -224,35 +217,39 @@ export class ReportsService {
       }
       const affAgg = affiliatesMap.get(aff)!;
       affAgg.sales += sales;
-      affAgg.revenue += revenue;
+      affAgg.frontend += frontend;
+      affAgg.total += total;
       affAgg.spend += spend;
-      affAgg.byDay.set(day, bump(affAgg.byDay.get(day), sales, revenue, spend));
+      affAgg.byDay.set(day, bump(affAgg.byDay.get(day), sales, frontend, total, spend));
 
       if (!affAgg.subs.has(sub)) {
         affAgg.subs.set(sub, {
           sales: 0,
-          revenue: 0,
+          frontend: 0,
+          total: 0,
           spend: 0,
           byDay: new Map(),
         });
       }
       const subAgg = affAgg.subs.get(sub)!;
       subAgg.sales += sales;
-      subAgg.revenue += revenue;
+      subAgg.frontend += frontend;
+      subAgg.total += total;
       subAgg.spend += spend;
-      subAgg.byDay.set(day, bump(subAgg.byDay.get(day), sales, revenue, spend));
+      subAgg.byDay.set(day, bump(subAgg.byDay.get(day), sales, frontend, total, spend));
     }
 
     const serializeDayMap = (map: Map<string, AggCell>) => {
-      const out: Record<string, MetricBlock> = {};
+      const out: Record<string, [number, number, number, number]> = {};
       for (const [day, cell] of map) {
-        if (cell.sales === 0 && cell.revenue === 0 && cell.spend === 0) continue;
-        out[day] = metrics(cell.revenue, cell.spend, cell.sales);
+        if (cell.sales === 0 && cell.frontend === 0 && cell.total === 0 && cell.spend === 0) continue;
+        out[day] = pack(cell.sales, cell.frontend, cell.total, cell.spend);
       }
       return out;
     };
 
     let totalSales = 0;
+    let totalFrontend = 0;
     let totalRevenue = 0;
     let totalSpend = 0;
 
@@ -260,22 +257,20 @@ export class ReportsService {
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([affiliateCode, agg]) => {
         totalSales += agg.sales;
-        totalRevenue += agg.revenue;
+        totalFrontend += agg.frontend;
+        totalRevenue += agg.total;
         totalSpend += agg.spend;
 
         return {
-          affiliateCode,
-          level: 'affiliate' as const,
-          totals: metrics(agg.revenue, agg.spend, agg.sales),
-          byDay: serializeDayMap(agg.byDay),
-          children: [...agg.subs.entries()]
-            .sort((a, b) => a[0].localeCompare(b[0]))
+          a: affiliateCode,
+          t: pack(agg.sales, agg.frontend, agg.total, agg.spend),
+          d: serializeDayMap(agg.byDay),
+          c: [...agg.subs.entries()]
+            .sort((x, y) => x[0].localeCompare(y[0]))
             .map(([subAffiliateCode, sub]) => ({
-              affiliateCode,
-              subAffiliateCode,
-              level: 'sub' as const,
-              totals: metrics(sub.revenue, sub.spend, sub.sales),
-              byDay: serializeDayMap(sub.byDay),
+              s: subAffiliateCode,
+              t: pack(sub.sales, sub.frontend, sub.total, sub.spend),
+              d: serializeDayMap(sub.byDay),
             })),
         };
       });
@@ -283,8 +278,8 @@ export class ReportsService {
     return {
       days,
       rows: reportRows,
-      totals: metrics(totalRevenue, totalSpend, totalSales),
-      filters,
+      totals: pack(totalSales, totalFrontend, totalRevenue, totalSpend),
+      range: { dateFrom: filters.dateFrom, dateTo: filters.dateTo },
     };
   }
 
@@ -292,23 +287,15 @@ export class ReportsService {
     await cache.delByPrefix('report:');
   }
 
-  /** Warm the default full-range report so the first UI hit is instant. */
   async warmDefaultCaches() {
     const options = await this.getFilterOptions();
     if (!options.dateMin || !options.dateMax) return;
 
-    await Promise.all([
-      this.getPerformance({
-        dateFrom: options.dateMin,
-        dateTo: options.dateMax,
-        roasMode: 'frontend',
-      }),
-      this.getPerformance({
-        dateFrom: options.dateMin,
-        dateTo: options.dateMax,
-        roasMode: 'total',
-      }),
-    ]);
+    // One full-year payload (both revenues). Client slices ROAS / filters from this.
+    await this.getPerformance({
+      dateFrom: options.dateMin,
+      dateTo: options.dateMax,
+    });
   }
 }
 

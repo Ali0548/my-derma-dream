@@ -1,18 +1,12 @@
-import { useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import type { ColumnDef } from '@tanstack/react-table';
 import { Search } from 'lucide-react';
 import { auditApi, type RuleEvaluation } from '../api/audit';
+import { ruleEvaluationColumns, ruleEvaluationFilters } from '../components/audit/ruleEvaluationColumns';
 import { Button } from '../components/ui/Button';
 import { ComponentLoader } from '../components/ui/ComponentLoader';
-
-const OUTCOME_LABEL: Record<string, string> = {
-  winner: 'Applied',
-  date_out_of_range: 'Skipped — date',
-  scope_mismatch: 'Skipped — scope',
-  lower_specificity: 'Skipped — less specific',
-  tie_lost: 'Skipped — tie-break',
-  no_candidates: 'No candidates',
-};
+import { DataTable } from '../components/ui/DataTable';
 
 export default function AuditPage() {
   const [input, setInput] = useState('ORD0000235');
@@ -27,11 +21,16 @@ export default function AuditPage() {
     enabled: Boolean(orderId),
   });
 
-  const evaluations = [...(query.data?.resolution.evaluations ?? [])].sort((a, b) => {
-    if (a.isWinner !== b.isWinner) return a.isWinner ? -1 : 1;
-    if (a.matched !== b.matched) return a.matched ? -1 : 1;
-    return b.specificityScore - a.specificityScore;
-  });
+  const evaluations = useMemo(() => {
+    const rows = [...(query.data?.resolution.evaluations ?? [])];
+    return rows.sort((a, b) => {
+      if (a.isWinner !== b.isWinner) return a.isWinner ? -1 : 1;
+      if (a.matched !== b.matched) return a.matched ? -1 : 1;
+      return b.specificityScore - a.specificityScore;
+    });
+  }, [query.data]);
+
+  const columns = useMemo(() => ruleEvaluationColumns(), []);
 
   return (
     <div className="space-y-4">
@@ -43,8 +42,8 @@ export default function AuditPage() {
           See which rule paid — and why others did not
         </h2>
         <p className="mt-1 max-w-2xl text-sm text-ink-soft">
-          Enter any order ID. We show the winning CPA, the commission math, and every other rule with
-          a plain-English skip reason.
+          Enter any order ID. The table below names every rule, whether it applied or was skipped, and
+          explains why in plain English (including how the specificity score is built).
         </p>
 
         <form
@@ -86,7 +85,10 @@ export default function AuditPage() {
               <Row label="Affiliate" value={query.data.order.affiliateCode || '—'} />
               <Row label="Sub-affiliate" value={query.data.order.subAffiliateCode || '—'} />
               <Row label="Product" value={query.data.order.product1Name} />
-              <Row label="Price point" value={`$${query.data.order.pricePoint ?? query.data.order.product1Price}`} />
+              <Row
+                label="Price point"
+                value={`$${query.data.order.pricePoint ?? query.data.order.product1Price}`}
+              />
             </InfoCard>
             <InfoCard title="Revenue">
               <Row label="Front-end" value={money(query.data.order.frontendRevenue)} />
@@ -96,12 +98,11 @@ export default function AuditPage() {
             <InfoCard title="Commission result">
               <Row
                 label="Status"
-                value={query.data.resolution.status === 'resolved' ? 'Rule applied' : 'No matching rule'}
+                value={
+                  query.data.resolution.status === 'resolved' ? 'Rule applied' : 'No matching rule'
+                }
               />
-              <Row
-                label="Winning rule"
-                value={query.data.resolution.winningRule?.ruleId ?? '—'}
-              />
+              <Row label="Winning rule" value={query.data.resolution.winningRule?.ruleId ?? '—'} />
               <Row label="Paid" value={money(String(query.data.resolution.commission))} />
               <p className="mt-3 rounded-xl bg-foam px-3 py-2 text-sm leading-relaxed text-ink">
                 {query.data.resolution.winReason}
@@ -109,33 +110,16 @@ export default function AuditPage() {
             </InfoCard>
           </section>
 
-          <section className="overflow-hidden rounded-3xl border border-line bg-white shadow-soft">
-            <div className="border-b border-line px-4 py-3">
-              <h3 className="font-extrabold text-ink">Rule-by-rule outcome</h3>
-              <p className="text-xs text-ink-soft">
-                Specificity ladder: product → price → affiliate → sub-affiliate (stronger wins)
-              </p>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead className="bg-foam/80 text-left text-xs font-extrabold uppercase tracking-wide text-ink-soft">
-                  <tr>
-                    <th className="px-3 py-2.5">Rule</th>
-                    <th className="px-3 py-2.5">Outcome</th>
-                    <th className="px-3 py-2.5">Why</th>
-                    <th className="px-3 py-2.5">Scope</th>
-                    <th className="px-3 py-2.5 text-right">Score</th>
-                    <th className="px-3 py-2.5 text-right">If applied</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {evaluations.map((row) => (
-                    <EvaluationRow key={`${row.ruleId}-${row.outcomeCode}`} row={row} />
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
+          <div className="rounded-3xl border border-line bg-white p-3 shadow-soft sm:p-4">
+            <DataTable
+              title="Every rule checked for this order"
+              data={evaluations}
+              columns={columns as ColumnDef<RuleEvaluation, unknown>[]}
+              exportFileName={`${orderId}-rule-outcomes`}
+              searchPlaceholder="Search by rule id, why text, scope…"
+              filters={ruleEvaluationFilters}
+            />
+          </div>
         </>
       ) : null}
     </div>
@@ -164,37 +148,4 @@ function money(value: string | number) {
   const n = Number(value);
   if (!Number.isFinite(n)) return String(value);
   return n.toLocaleString(undefined, { style: 'currency', currency: 'USD' });
-}
-
-function EvaluationRow({ row }: { row: RuleEvaluation }) {
-  return (
-    <tr className={row.isWinner ? 'bg-mint/10' : 'border-t border-line'}>
-      <td className="px-3 py-2.5 font-extrabold text-ink">{row.ruleId}</td>
-      <td className="px-3 py-2.5">
-        <span
-          className={`inline-flex rounded-full px-2.5 py-1 text-[0.7rem] font-extrabold ${
-            row.isWinner
-              ? 'bg-success/15 text-success'
-              : row.matched
-                ? 'bg-copper/15 text-copper'
-                : 'bg-foam text-ink-soft'
-          }`}
-        >
-          {OUTCOME_LABEL[row.outcomeCode] ?? row.outcomeCode}
-        </span>
-      </td>
-      <td className="max-w-md px-3 py-2.5 text-ink-soft">{row.outcomeDetail}</td>
-      <td className="px-3 py-2.5 text-xs text-ink-soft">
-        {[
-          row.cpaType ? `${row.cpaType} ${row.cpaValue}${row.cpaType === 'percent' ? '%' : ''}` : null,
-        ]
-          .filter(Boolean)
-          .join(' · ') || '—'}
-      </td>
-      <td className="px-3 py-2.5 text-right font-bold tabular-nums">{row.specificityScore}</td>
-      <td className="px-3 py-2.5 text-right font-bold tabular-nums">
-        {row.hypotheticalCommission == null ? '—' : money(row.hypotheticalCommission)}
-      </td>
-    </tr>
-  );
 }

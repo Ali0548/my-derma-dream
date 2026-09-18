@@ -9,7 +9,17 @@ type FieldProps = {
 };
 
 const inputClass =
-  'w-full min-h-11 rounded-xl border border-line bg-white px-3.5 py-2.5 text-ink shadow-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/20';
+  'box-border h-11 w-full rounded-xl border border-line bg-white px-3.5 text-sm text-ink shadow-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/20';
+
+function FieldMeta({ error, hint }: { error?: string; hint?: string }) {
+  return (
+    <span className="min-h-4 text-xs font-semibold leading-snug">
+      {error ? <span className="text-danger">{error}</span> : null}
+      {!error && hint ? <span className="font-normal text-ink-soft">{hint}</span> : null}
+      {!error && !hint ? <span className="invisible">.</span> : null}
+    </span>
+  );
+}
 
 export function TextField({
   name,
@@ -22,15 +32,19 @@ export function TextField({
   const showError = Boolean(meta.touched && meta.error);
 
   return (
-    <label className="grid gap-1.5">
+    <label className="grid content-start gap-1.5">
       <span className="text-sm font-bold text-ink">{label}</span>
       <input
-        className={clsx(inputClass, showError && 'border-danger focus:border-danger focus:ring-danger/15', className)}
+        className={clsx(
+          inputClass,
+          props.type === 'date' && 'appearance-none pr-3 leading-none',
+          showError && 'border-danger focus:border-danger focus:ring-danger/15',
+          className,
+        )}
         {...field}
         {...props}
       />
-      {showError ? <span className="text-xs font-semibold text-danger">{meta.error}</span> : null}
-      {!showError && hint ? <span className="text-xs text-ink-soft">{hint}</span> : null}
+      <FieldMeta error={showError ? meta.error : undefined} hint={hint} />
     </label>
   );
 }
@@ -46,20 +60,18 @@ export function TextArea({
   const showError = Boolean(meta.touched && meta.error);
 
   return (
-    <label className="grid gap-1.5">
+    <label className="grid content-start gap-1.5">
       <span className="text-sm font-bold text-ink">{label}</span>
       <textarea
         className={clsx(
-          inputClass,
-          'min-h-28 resize-y',
+          'box-border min-h-28 w-full resize-y rounded-xl border border-line bg-white px-3.5 py-2.5 text-sm text-ink shadow-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/20',
           showError && 'border-danger focus:border-danger focus:ring-danger/15',
           className,
         )}
         {...field}
         {...props}
       />
-      {showError ? <span className="text-xs font-semibold text-danger">{meta.error}</span> : null}
-      {!showError && hint ? <span className="text-xs text-ink-soft">{hint}</span> : null}
+      <FieldMeta error={showError ? meta.error : undefined} hint={hint} />
     </label>
   );
 }

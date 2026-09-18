@@ -7,7 +7,7 @@ export const performanceQuerySchema = z.object({
   subAffiliate: z.string().optional(),
   product: z.string().optional(),
   pricePoint: z.string().optional(),
-  roasMode: z.enum(['frontend', 'total']).default('frontend'),
+  roasMode: z.enum(['frontend', 'total']).optional(),
 });
 
 export type PerformanceQuery = z.infer<typeof performanceQuerySchema>;

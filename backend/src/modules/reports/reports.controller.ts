@@ -18,7 +18,7 @@ export class ReportsController {
       subAffiliate: query.subAffiliate || undefined,
       product: query.product || undefined,
       pricePoint: query.pricePoint || undefined,
-      roasMode: query.roasMode ?? 'frontend',
+      roasMode: query.roasMode || undefined,
     });
     return sendSuccess(res, data);
   };

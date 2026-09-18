@@ -1,7 +1,12 @@
 import { env } from '../config/env.js';
-import { MemoryCache, type CacheStore } from './memory.cache.js';
+import { LayeredCache } from './layered.cache.js';
+import type { CacheStore } from './memory.cache.js';
 
-export const cache: CacheStore = new MemoryCache();
+/** Memory + disk. Report responses survive restarts until rules change. */
+export const cache: CacheStore = new LayeredCache();
+
+/** Reports stay warm for a week unless a rule/recalc invalidates them. */
+export const REPORT_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 export const CacheKeys = {
   usersList: 'users:list',
@@ -23,4 +28,4 @@ export async function cached<T>(
   return { data, fromCache: false };
 }
 
-export { type CacheStore };
+export { type CacheStore } from './memory.cache.js';

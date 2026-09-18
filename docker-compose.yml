@@ -34,6 +34,8 @@ services:
       ADMIN_EMAIL: abhai0548@gmail.com
       ADMIN_PASSWORD: 'Lumora@Admin#2026$$Kx9!'
       ADMIN_NAME: Abhai Admin
+    volumes:
+      - lumora_report_cache:/app/.report-cache
     ports:
       - '4000:4000'
 
@@ -51,3 +53,4 @@ services:
 
 volumes:
   lumora_pg:
+  lumora_report_cache:

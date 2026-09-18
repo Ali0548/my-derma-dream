@@ -46,16 +46,23 @@ export function Sidebar({ open, onClose }: SidebarProps) {
       >
         <div className="bg-lumora-gradient absolute inset-x-0 top-0 h-1 opacity-90" />
 
-        <div className="mb-5 flex items-center gap-3 border-b border-white/10 px-2 pb-5 pt-1">
-          <span className="grid h-11 w-11 place-items-center rounded-2xl bg-lumora-gradient text-lg font-extrabold text-white shadow-[0_10px_24px_rgba(26,168,184,0.3)]">
-            L
-          </span>
-          <div>
-            <strong className="block text-[1.1rem] font-extrabold tracking-tight text-white">
-              Lumora Labs
-            </strong>
-            <p className="text-xs text-white/60">Affiliate desk</p>
-          </div>
+        <div className="mb-5 border-b border-white/10 px-2 pb-5 pt-1">
+          <NavLink
+            to="/app"
+            end
+            onClick={onClose}
+            className="flex cursor-pointer items-center gap-3 rounded-xl outline-none transition hover:bg-white/8 focus-visible:ring-2 focus-visible:ring-white/30"
+          >
+            <span className="grid h-11 w-11 place-items-center rounded-2xl bg-lumora-gradient text-lg font-extrabold text-white shadow-[0_10px_24px_rgba(26,168,184,0.3)]">
+              L
+            </span>
+            <div>
+              <strong className="block text-[1.1rem] font-extrabold tracking-tight text-white">
+                Lumora Labs
+              </strong>
+              <p className="text-xs text-white/60">Affiliate desk</p>
+            </div>
+          </NavLink>
         </div>
 
         <nav className="flex flex-1 flex-col gap-1.5">

@@ -1,4 +1,5 @@
 import { api } from './client';
+export { deriveReportView } from './deriveReport';
 
 export type RoasMode = 'frontend' | 'total';
 
@@ -8,6 +9,33 @@ export type MetricBlock = {
   roas: number | null;
   sales: number;
   aov: number | null;
+};
+
+/** [sales, frontendRevenue, totalRevenue, spend] */
+export type CompactCell = [number, number, number, number];
+
+export type CompactChild = {
+  s: string;
+  t: CompactCell;
+  d: Record<string, CompactCell>;
+};
+
+export type CompactAffiliate = {
+  a: string;
+  t: CompactCell;
+  d: Record<string, CompactCell>;
+  c: CompactChild[];
+};
+
+export type CompactReport = {
+  days: string[];
+  rows: CompactAffiliate[];
+  totals: CompactCell;
+  range?: { dateFrom: string; dateTo: string };
+  meta?: {
+    fromCache: boolean;
+    tookMs: number;
+  };
 };
 
 export type PerformanceChildRow = {
@@ -30,19 +58,11 @@ export type PerformanceReport = {
   days: string[];
   rows: PerformanceAffiliateRow[];
   totals: MetricBlock;
-  filters: {
-    dateFrom: string;
-    dateTo: string;
-    affiliate?: string;
-    subAffiliate?: string;
-    product?: string;
-    pricePoint?: string;
-    roasMode: RoasMode;
-  };
   meta: {
     fromCache: boolean;
     tookMs: number;
     roasMode: RoasMode;
+    derivedClientSide: boolean;
   };
 };
 
@@ -62,11 +82,18 @@ export type PerformanceQuery = {
   subAffiliate?: string;
   product?: string;
   pricePoint?: string;
-  roasMode: RoasMode;
+  roasMode?: RoasMode;
 };
 
 export const reportsApi = {
   filters: () => api.get<FilterOptions>('/reports/filters'),
-  performance: (params: PerformanceQuery) =>
-    api.get<PerformanceReport>('/reports/performance', { params }),
+  performanceBase: async (params: {
+    dateFrom: string;
+    dateTo: string;
+    product?: string;
+    pricePoint?: string;
+  }) => {
+    const res = await api.get<CompactReport>('/reports/performance', { params });
+    return res;
+  },
 };

@@ -48,6 +48,13 @@ export type RuleEvaluation = {
   cpaType: CpaType | null;
   cpaValue: number | null;
   hypotheticalCommission: number | null;
+  product: string;
+  pricePoint: string;
+  affiliate: string;
+  subAffiliate: string;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  scoreBreakdown: string;
 };
 
 export type ResolutionResult = {
@@ -138,11 +145,45 @@ export function compareRules(a: RuleInput, b: RuleInput): number {
 function describeScope(rule: RuleInput): string {
   const parts = [
     rule.product || 'any product',
-    rule.pricePoint ? `price ${rule.pricePoint}` : 'any price',
+    rule.pricePoint ? `price $${rule.pricePoint}` : 'any price',
     rule.affiliate || 'any affiliate',
     rule.subAffiliate || 'any sub',
   ];
   return parts.join(', ');
+}
+
+function scoreBreakdown(rule: RuleInput): string {
+  const bits: string[] = [];
+  if (rule.product) bits.push('product +1');
+  if (rule.pricePoint) bits.push('price +2');
+  if (rule.affiliate) bits.push('affiliate +4');
+  if (rule.subAffiliate) bits.push('sub-affiliate +8');
+  if (bits.length === 0) return 'catch-all (0) — matches everything';
+  return `${bits.join(', ')} = ${specificityScore(rule)}`;
+}
+
+function baseEvaluation(
+  rule: RuleInput,
+  partial: Pick<
+    RuleEvaluation,
+    'matched' | 'isWinner' | 'outcomeCode' | 'outcomeDetail' | 'hypotheticalCommission'
+  >,
+): RuleEvaluation {
+  return {
+    ruleId: rule.ruleId,
+    ruleUuid: rule.id,
+    specificityScore: specificityScore(rule),
+    cpaType: rule.cpaType,
+    cpaValue: rule.cpaValue,
+    product: rule.product,
+    pricePoint: rule.pricePoint,
+    affiliate: rule.affiliate,
+    subAffiliate: rule.subAffiliate,
+    effectiveFrom: rule.effectiveFrom,
+    effectiveTo: rule.effectiveTo,
+    scoreBreakdown: scoreBreakdown(rule),
+    ...partial,
+  };
 }
 
 /** Fast path for bulk recalc — no per-rule audit trail. */
@@ -191,51 +232,42 @@ export function resolveCommission(order: OrderInput, rules: RuleInput[]): Resolu
     const score = specificityScore(rule);
 
     if (!inDateRange(order.orderDate, rule.effectiveFrom, rule.effectiveTo)) {
-      evaluations.push({
-        ruleId: rule.ruleId,
-        ruleUuid: rule.id,
-        matched: false,
-        isWinner: false,
-        specificityScore: score,
-        outcomeCode: 'date_out_of_range',
-        outcomeDetail: `Order date ${order.orderDate} outside ${rule.effectiveFrom} → ${rule.effectiveTo ?? 'open'}`,
-        cpaType: rule.cpaType,
-        cpaValue: rule.cpaValue,
-        hypotheticalCommission: null,
-      });
+      evaluations.push(
+        baseEvaluation(rule, {
+          matched: false,
+          isWinner: false,
+          outcomeCode: 'date_out_of_range',
+          outcomeDetail: `${rule.ruleId} skipped: order date ${order.orderDate} is outside this rule’s effective window (${rule.effectiveFrom} → ${rule.effectiveTo ?? 'no end'}). Even though its scope is “${describeScope(rule)}”, dates must overlap first.`,
+          hypotheticalCommission: null,
+        }),
+      );
       continue;
     }
 
     const scope = scopeMatches(rule, order);
     if (!scope.ok) {
-      evaluations.push({
-        ruleId: rule.ruleId,
-        ruleUuid: rule.id,
-        matched: false,
-        isWinner: false,
-        specificityScore: score,
-        outcomeCode: 'scope_mismatch',
-        outcomeDetail: scope.detail,
-        cpaType: rule.cpaType,
-        cpaValue: rule.cpaValue,
-        hypotheticalCommission: null,
-      });
+      evaluations.push(
+        baseEvaluation(rule, {
+          matched: false,
+          isWinner: false,
+          outcomeCode: 'scope_mismatch',
+          outcomeDetail: `${rule.ruleId} skipped: ${scope.detail}. This rule only covers “${describeScope(rule)}”, so it cannot pay this order.`,
+          hypotheticalCommission: null,
+        }),
+      );
       continue;
     }
 
     candidates.push(rule);
-    evaluations.push({
-      ruleId: rule.ruleId,
-      ruleUuid: rule.id,
-      matched: true,
-      isWinner: false,
-      specificityScore: score,
-      outcomeCode: 'lower_specificity',
-      outcomeDetail: scope.detail,
-      cpaType: rule.cpaType,
-      cpaValue: rule.cpaValue,
-      hypotheticalCommission: calculateCommission(rule.cpaType, rule.cpaValue, order.frontendRevenue),
-    });
+    evaluations.push(
+      baseEvaluation(rule, {
+        matched: true,
+        isWinner: false,
+        outcomeCode: 'lower_specificity',
+        outcomeDetail: `${rule.ruleId} matched this order (${describeScope(rule)}; score ${score}: ${scoreBreakdown(rule)}). Waiting to compare against other matches…`,
+        hypotheticalCommission: calculateCommission(rule.cpaType, rule.cpaValue, order.frontendRevenue),
+      }),
+    );
   }
 
   if (candidates.length === 0) {
@@ -259,6 +291,13 @@ export function resolveCommission(order: OrderInput, rules: RuleInput[]): Resolu
               cpaType: null,
               cpaValue: null,
               hypotheticalCommission: null,
+              product: '',
+              pricePoint: '',
+              affiliate: '',
+              subAffiliate: '',
+              effectiveFrom: '',
+              effectiveTo: null,
+              scoreBreakdown: 'n/a',
             },
           ],
     };
@@ -274,7 +313,7 @@ export function resolveCommission(order: OrderInput, rules: RuleInput[]): Resolu
     if (evaluation.ruleId === winner.ruleId) {
       evaluation.isWinner = true;
       evaluation.outcomeCode = 'winner';
-      evaluation.outcomeDetail = `Won with specificity ${winnerScore} (${describeScope(winner)})`;
+      evaluation.outcomeDetail = `${winner.ruleId} applied (winner). It is the most specific match for this order: “${describeScope(winner)}”. Score ${winnerScore} comes from ${scoreBreakdown(winner)}. CPA ${winner.cpaType === 'percent' ? `${winner.cpaValue}% of front-end` : `fixed $${winner.cpaValue}`} on $${order.frontendRevenue.toFixed(2)} → $${commission.toFixed(2)}.`;
       continue;
     }
 
@@ -283,10 +322,10 @@ export function resolveCommission(order: OrderInput, rules: RuleInput[]): Resolu
     const otherScore = specificityScore(other);
     if (otherScore < winnerScore) {
       evaluation.outcomeCode = 'lower_specificity';
-      evaluation.outcomeDetail = `Specificity ${otherScore} < winner ${winnerScore}`;
+      evaluation.outcomeDetail = `${other.ruleId} skipped: it did match, but it is less specific than ${winner.ruleId}. ${other.ruleId} scores ${otherScore} (${scoreBreakdown(other)}) vs winner ${winnerScore} (${scoreBreakdown(winner)}). Ladder weights: product +1, price +2, affiliate +4, sub-affiliate +8 — higher total wins.`;
     } else {
       evaluation.outcomeCode = 'tie_lost';
-      evaluation.outcomeDetail = `Same specificity ${otherScore}; lost tie-break to ${winner.ruleId}`;
+      evaluation.outcomeDetail = `${other.ruleId} skipped: same specificity (${otherScore}) as ${winner.ruleId}, so tie-break applies — later effective_from wins, then higher rule_id. Winner ${winner.ruleId} starts ${winner.effectiveFrom} (id ${winner.ruleId}); this rule starts ${other.effectiveFrom} (id ${other.ruleId}).`;
     }
   }
 
@@ -295,9 +334,11 @@ export function resolveCommission(order: OrderInput, rules: RuleInput[]): Resolu
     commission,
     winningRule: winner,
     specificityScore: winnerScore,
-    winReason: `${winner.ruleId} won (specificity ${winnerScore}: ${describeScope(winner)}). Commission ${
-      winner.cpaType
-    } ${winner.cpaValue}${winner.cpaType === 'percent' ? '%' : ''} on front-end $${order.frontendRevenue.toFixed(2)} = $${commission.toFixed(2)}.`,
+    winReason: `${winner.ruleId} paid this order. Why: most specific matching rule — “${describeScope(winner)}” (score ${winnerScore}: ${scoreBreakdown(winner)}). Math: ${
+      winner.cpaType === 'percent'
+        ? `${winner.cpaValue}% × front-end $${order.frontendRevenue.toFixed(2)}`
+        : `fixed $${winner.cpaValue}`
+    } = $${commission.toFixed(2)}. Other matching rules lost on specificity or tie-break; mismatched/date rules never entered the contest.`,
     evaluations,
   };
 }

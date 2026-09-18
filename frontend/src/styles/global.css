@@ -143,11 +143,27 @@
 
 .lumora-select__control {
   min-height: 44px !important;
+  height: 44px !important;
+  width: 100% !important;
   border-radius: 12px !important;
   border-color: var(--color-line) !important;
   box-shadow: none !important;
   background: #fff !important;
   cursor: pointer !important;
+}
+
+.lumora-select {
+  width: 100%;
+}
+
+.lumora-select__value-container {
+  height: 42px !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+}
+
+.lumora-select__indicators {
+  height: 42px !important;
 }
 
 .lumora-select__control--is-focused {
