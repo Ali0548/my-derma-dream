@@ -17,5 +17,6 @@ RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist
 COPY drizzle ./drizzle
 COPY scripts ./scripts
+COPY initial-seeds ./initial-seeds
 EXPOSE 4000
 CMD ["node", "./scripts/docker-start.mjs"]
