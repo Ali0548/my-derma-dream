@@ -1,0 +1,53 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: lumora-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: lumora
+      POSTGRES_PASSWORD: lumora
+      POSTGRES_DB: lumora
+    volumes:
+      - lumora_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U lumora -d lumora']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build:
+      context: ./backend
+    container_name: lumora-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: 4000
+      NODE_ENV: production
+      DATABASE_URL: postgresql://lumora:lumora@db:5432/lumora
+      JWT_SECRET: lumora-dev-jwt-secret-change-in-production-2026
+      JWT_EXPIRES_IN: 7d
+      CORS_ORIGIN: http://localhost:8080
+      CACHE_TTL_SECONDS: 60
+      ADMIN_EMAIL: abhai0548@gmail.com
+      ADMIN_PASSWORD: 'Lumora@Admin#2026$$Kx9!'
+      ADMIN_NAME: Abhai Admin
+    ports:
+      - '4000:4000'
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: /api
+    container_name: lumora-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - '8080:80'
+
+volumes:
+  lumora_pg:
